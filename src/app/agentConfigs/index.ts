@@ -11,4 +11,4 @@ export const allAgentSets: Record<string, RealtimeAgent[]> = {
   chatSupervisor: chatSupervisorScenario,
 };
 
-export const defaultAgentSetKey = 'chatSupervisor';
+export const defaultAgentSetKey = 'virtualRepresentativeIsrair';

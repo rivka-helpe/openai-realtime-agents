@@ -62,7 +62,23 @@ You are Tally, a female telephone service representative for the YES company (pr
 
 # Example (tool call)
 - User: Can you tell me about your family plan options?
-
+- Supervisor Assistant: lookup_policy_document(topic="family plan options")
+- lookup_policy_document(): [
+  {
+    id: "ID-010",
+    name: "Family Plan Policy",
+    topic: "family plan options",
+    content:
+      "The family plan allows up to 5 lines per account. All lines share a single data pool. Each additional line after the first receives a 10% discount. All lines must be on the same account.",
+  },
+  {
+    id: "ID-011",
+    name: "Unlimited Data Policy",
+    topic: "unlimited data",
+    content:
+      "Unlimited data plans provide high-speed data up to 50GB per month. After 50GB, speeds may be reduced during network congestion. All lines on a family plan share the same data pool. Unlimited plans are available for both individual and family accounts.",
+  },
+];
 - Supervisor Assistant:
 # Message
 Yes we do—up to five lines can share data, and you get a 10% discount for each new line [Family Plan Policy](ID-010).
@@ -74,9 +90,144 @@ Yes we do—up to five lines can share data, and you get a 10% discount for each
 I'm sorry, but I'm not able to process payments over the phone. Would you like me to connect you with a human representative, or help you find your nearest NewTelco store for further assistance?
 `;
 
+export const supervisorAgentTools = [
+  {
+    type: "function",
+    name: "generateInstructions",
+    description: "Tool to get instructions according to the question. This only reads instructions, and doesn't provide the ability to modify or delete any values.give step by step the instructions according to customer response",
+    parameters: {
+      type: "object",
+      properties: {
+        task: {
+          type: "string",
+          description: "the instruction to the user.",
+        }
+      },
+      required: ["task"],
+      additionalProperties: false,
+    }
+  },
+  {
+    type: "function",
+    name: "getVisualDescription",
+    description: "Tool to get visual description instructions according to the question. This only reads instructions, and doesn't provide the ability to modify or delete any values.",
+    parameters: {
+      type: "object",
+      properties: {
+        task: {
+          type: "string",
+          description: "the description to the user.",
+        }
+      },
+      required: ["task"],
+      additionalProperties: false,
+    }
+  }
+];
 
+async function fetchResponsesMessage(body: any) {
+  const response = await fetch('/api/responses', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    // Preserve the previous behaviour of forcing sequential tool calls.
+    body: JSON.stringify({ ...body, parallel_tool_calls: false }),
+  });
 
+  if (!response.ok) {
+    console.warn('Server returned an error:', response);
+    return { error: 'Something went wrong.' };
+  }
 
+  const completion = await response.json();
+  return completion;
+}
+
+function getToolResponse(fName: string) {
+  switch (fName) {
+    case "generateInstructions":
+      return instructions;
+    case "getVisualDescription":
+      return visual_description;
+    default:
+      return { result: true };
+  }
+}
+
+/**
+ * Iteratively handles function calls returned by the Responses API until the
+ * supervisor produces a final textual answer. Returns that answer as a string.
+ */
+async function handleToolCalls(
+  body: any,
+  response: any,
+  addBreadcrumb?: (title: string, data?: any) => void,
+) {
+  let currentResponse = response;
+
+  while (true) {
+    if (currentResponse?.error) {
+      return { error: 'Something went wrong.' } as any;
+    }
+
+    const outputItems: any[] = currentResponse.output ?? [];
+
+    // Gather all function calls in the output.
+    const functionCalls = outputItems.filter((item) => item.type === 'function_call');
+
+    if (functionCalls.length === 0) {
+      // No more function calls – build and return the assistant's final message.
+      const assistantMessages = outputItems.filter((item) => item.type === 'message');
+
+      const finalText = assistantMessages
+        .map((msg: any) => {
+          const contentArr = msg.content ?? [];
+          return contentArr
+            .filter((c: any) => c.type === 'output_text')
+            .map((c: any) => c.text)
+            .join('');
+        })
+        .join('\n');
+
+      return finalText;
+    }
+
+    // For each function call returned by the supervisor model, execute it locally and append its
+    // output to the request body as a `function_call_output` item.
+    for (const toolCall of functionCalls) {
+      const fName = toolCall.name;
+      const args = JSON.parse(toolCall.arguments || '{}');
+      const toolRes = getToolResponse(fName);
+
+      // Since we're using a local function, we don't need to add our own breadcrumbs
+      if (addBreadcrumb) {
+        addBreadcrumb(`[supervisorAgent] function call: ${fName}`, args);
+      }
+      if (addBreadcrumb) {
+        addBreadcrumb(`[supervisorAgent] function call result: ${fName}`, toolRes);
+      }
+
+      // Add function call and result to the request body to send back to realtime
+      body.input.push(
+        {
+          type: 'function_call',
+          call_id: toolCall.call_id,
+          name: toolCall.name,
+          arguments: toolCall.arguments,
+        },
+        {
+          type: 'function_call_output',
+          call_id: toolCall.call_id,
+          output: JSON.stringify(toolRes),
+        },
+      );
+    }
+
+    // Make the follow-up request including the tool outputs.
+    currentResponse = await fetchResponsesMessage(body);
+  }
+}
 
 export const getNextResponseFromSupervisor = tool({
   name: 'getNextResponseFromSupervisor',
@@ -125,11 +276,19 @@ export const getNextResponseFromSupervisor = tool({
           `,
         },
       ],
-      tools: [],
+      tools: supervisorAgentTools,
     };
 
+    const response = await fetchResponsesMessage(body);
+    if (response.error) {
+      return { error: 'Something went wrong.' };
+    }
 
+    const finalText = await handleToolCalls(body, response, addBreadcrumb);
+    if ((finalText as any)?.error) {
+      return { error: 'Something went wrong.' };
+    }
 
+    return { nextResponse: finalText as string };
   },
 });
-  
