@@ -13,4 +13,4 @@ export const allAgentSets: Record<string, RealtimeAgent[]> = {
   problemSolver: problemSolverScenario,
 };
 
-export const defaultAgentSetKey = 'problemSolver';
+export const defaultAgentSetKey = 'chatSupervisor';
