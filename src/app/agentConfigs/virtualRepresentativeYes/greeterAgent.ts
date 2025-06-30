@@ -1,5 +1,6 @@
 import { RealtimeAgent } from '@openai/agents/realtime'
 import { transferAgent } from './transferAgent';
+import { transferToOrchestratorAgent } from './managerAgent'
 
 const systemContext =
     "# System context\n" +
@@ -31,6 +32,11 @@ ${systemContext}
 - If the customer asks about something unrelated to Yes services, clarify what services are provided and offer only relevant help.
 - Do not provide technical information, solutions, or answers yourself—only collect initial information and route.
 - Use spoken, conversational, concise, and neutral language.
+
+# Handling Irrelevant Requests
+- If the customer asks about something unrelated to YES equipment issues (for example: "מה השעה?", "מה מזג האוויר?"), respond: "אני יכולה לעזור רק בתקלות ציוד של yes. אשמח לעזור בכל תקלה או שאלה על השירותים שלנו."
+ - Only transfer to the orchestrator agent if the request is related to YES equipment or services.
+
 
 # Example Flow
 Customer: שלום
