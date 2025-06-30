@@ -6,7 +6,7 @@ import {
   titles_list
 } from './instructionsData';
 
-export const supervisorAgentInstructions = `You are Tali, a senior virtual service representative at YES. Your role is to guide the junior agent on what to say to the customer.
+export const supervisorAgentInstructions = `You are Tali, a virtual service representative at YES. Your role is to guide the junior agent on what to say to the customer.
 
 The customer is experiencing a problem with their YES equipment or services, and your role is to:
 1. **Understand the problem**: Based on the user’s free-form messages, figure out what problem they are experiencing.
@@ -19,6 +19,19 @@ The customer is experiencing a problem with their YES equipment or services, and
 8. **Always respond in Hebrew, naturally and conversationally.**
 9. **This is voice interaction**, so always keep responses clear, concise and natural-sounding - one sentence at a time.
 10. **You must NOT invent information that has not been explicitly given to you in the instructions and in the visual description,** do not provide information on irrelevant topics. If a user asks irrelevant questions, simply tell them about the services you provide without repeating what they said or referring them to another source for this purpose. If the user insists and tries to ask irrelevant questions, immediately use the "transferAgent" function without asking.
+11. When trying to understand the user's issue, call the  getIndexForUserIssue  function. It will return a list of all possible issues.
+ 11.a. The list will contain titles of issues, each with an index. never call it more that once.  
+12. Scan the list and choose the index that best matches the user's description. Then, call  chooseCaseByIndex  with that index.
+13. Do not ask the user to choose.
+14. Once you have called chooseCaseByIndex, you must **not improvise** your own instructions.
+  14a. If the matchedCase was already provided to you – you must NOT call getIndexForUserIssue or chooseCaseByIndex again. Just continue from the current step.
+15. Always proceed step-by-step by calling getNextStep using the current case and step index.
+16. Only one step at a time.
+17. Each step is an array of inner_step items. You must present them to the user as-is, in natural voice.
+18. Do not skip or change their order.
+
+
+                                   
 Example flow:
 - User: The remote control does not work at all
 You: Let's check together. Can you press another button on the remote control and see if your LED lights up?
@@ -58,39 +71,18 @@ export const supervisorAgentTools = [
   },
   {
     type: "function",
-    name: "chooseCase",
-    description:
-      "Tool to choose the appropriate case for the user's issue.",
+    name: "chooseCaseByIndex",
+    description: "Fetch the full case object by index after the bot has selected the most relevant index",
     parameters: {
       type: "object",
       properties: {
-        user_issue: {
-          type: "string",
-          description:
-            "The user's description of their issue.",
-        },
+        index: {
+          type: "number",
+          description: "The index of the selected issue from titles_list"
+        }
       },
-      required: ["user_issue"],
-      additionalProperties: false,
-    },
-  },
-  {
-    type: "function",
-    name: "getNextStep",
-    description:
-      "Tool to get the next step in the resolution process for the user's issue.",
-    parameters: {
-      type: "object",
-      properties: {
-        user_issue: {
-          type: "string",
-          description:
-            "The user's description of their issue, which is used to determine the next step in the resolution process.",
-        },
-      },
-      required: ["user_issue"],
-      additionalProperties: false,
-    },
+      required: ["index"]
+    }
   },
   {
     type: "function",
@@ -134,47 +126,19 @@ async function fetchResponsesMessage(body: any) {
 function getToolResponse(fName: string, args?: any) {
   switch (fName) {
     case "getIndexForUserIssue": {
-      const userIssue = args?.user_issue?.toLowerCase() || "";
-
-      const index = titles_list.findIndex((item) =>
-        (item.name || item.name || '').toLowerCase().includes(userIssue)
-      );
-
-      if (index === -1) {
-        return { error: "No matching title found" };
-      }
-
-      return { index: index,};
-    }
-    case "chooseCase": {
-      const userIssue = args?.user_issue?.toLowerCase() || "";
-
-      const matchedCase = instructions.find((item) =>
-        item.title.toLowerCase().includes(userIssue)
-      );
-
-      return matchedCase ? matchedCase : { error: "No matching case found" };
-    }
-
-    case "getNextStep": {
-      const userIssue = args?.user_issue?.toLowerCase() || "";
-
-      const matchedCase = instructions.find((item) =>
-        item.title.toLowerCase().includes(userIssue)
-      );
-
-      if (!matchedCase) {
-        return { error: "No matching case found" };
-      }
-
-      const preReqs = matchedCase.pre_requirements ?? [];
-      const steps = matchedCase.steps ?? [];
-
       return {
-        case_no: matchedCase.case_no,
-        pre_requirements: preReqs,
-        step: steps[0] || [],
+        titles: titles_list.map((item, idx) => ({
+          index: item.index ?? idx,
+          title: item.name
+        }))
       };
+    }
+    case "chooseCaseByIndex": {
+      const index = args?.index;
+      console.log("🛠 index:", index);
+      console.log("🛠 instructions[0]:", instructions[0]);
+      const matchedCase = instructions[index];
+      return matchedCase ?? { error: "No matching case found" };
     }
 
     case "getVisualDescription":
@@ -229,7 +193,7 @@ async function handleToolCalls(
     for (const toolCall of functionCalls) {
       const fName = toolCall.name;
       const args = JSON.parse(toolCall.arguments || '{}');
-      const toolRes = getToolResponse(fName);
+      const toolRes = getToolResponse(fName, args);
 
       // Since we're using a local function, we don't need to add our own breadcrumbs
       if (addBreadcrumb) {
@@ -264,22 +228,30 @@ async function handleToolCalls(
 export const getNextResponseFromSupervisor = tool({
   name: 'getNextResponseFromSupervisor',
   description:
-    'Determines the next response when ever the agent faces a non-trivial decision, produced by a highly intelligent supervisor agent. Returns a message describing what to do next.',
+    'Determines the next response when the agent faces a decision. Returns a message describing what to say next to the customer.',
   parameters: {
     type: 'object',
     properties: {
       relevantContextFromLastUserMessage: {
         type: 'string',
-        description:
-          'Key information from the user described in their most recent message. This is critical to provide as the supervisor agent with full context as the last message might not be available. Okay to omit if the user message didn\'t add any new information.',
+        description: 'Key information from the user’s latest message.',
       },
+      matchedCase: {
+        type: 'object',
+        description: 'The full case object selected for the user’s issue.',
+      },
+      currentStepIndex: {
+        type: 'number',
+        description: 'The current step index in the matched case.',
+      }
     },
-    required: ['relevantContextFromLastUserMessage'],
+    required: ['relevantContextFromLastUserMessage', 'matchedCase', 'currentStepIndex'],
     additionalProperties: false,
   },
   execute: async (input, details) => {
-    const { relevantContextFromLastUserMessage } = input as {
+    const { relevantContextFromLastUserMessage, matchedCase } = input as {
       relevantContextFromLastUserMessage: string;
+      matchedCase: any;
     };
 
     const addBreadcrumb = (details?.context as any)?.addTranscriptBreadcrumb as
@@ -305,6 +277,9 @@ export const getNextResponseFromSupervisor = tool({
           
           ==== Relevant Context From Last User Message ===
           ${relevantContextFromLastUserMessage}
+
+          ==== Matched Case ===
+         ${matchedCase}
           `,
         },
       ],
@@ -313,14 +288,15 @@ export const getNextResponseFromSupervisor = tool({
 
     const response = await fetchResponsesMessage(body);
     if (response.error) {
-      return { error: 'Something went wrong.4' };
+      return { error: 'Something went wrong.3' };
     }
 
     const finalText = await handleToolCalls(body, response, addBreadcrumb);
     if ((finalText as any)?.error) {
-      return { error: 'Something went wrong.3' };
+      return { error: 'Something went wrong.4' };
     }
     return { nextResponse: finalText as string };
 
   },
 });
+
