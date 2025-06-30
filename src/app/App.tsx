@@ -28,7 +28,8 @@ import { customerServiceRetailCompanyName } from "@/app/agentConfigs/customerSer
 import { chatSupervisorCompanyName } from "@/app/agentConfigs/chatSupervisor/yesAgent";
 import { simpleHandoffScenario } from "@/app/agentConfigs/simpleHandoff";
 import { problemSolverScenario } from "@/app/agentConfigs/problemSolverAgent";
-
+import { virtualRepresentativeYesScenario } from "@/app/agentConfigs/virtualRepresentativeYes";
+import { virtualRepresentativeYesCompanyName } from "@/app/agentConfigs/virtualRepresentativeYes";
 
 // Map used by connect logic for scenarios defined via the SDK.
 const sdkScenarioMap: Record<string, RealtimeAgent[]> = {
@@ -36,6 +37,7 @@ const sdkScenarioMap: Record<string, RealtimeAgent[]> = {
   customerServiceRetail: customerServiceRetailScenario,
   chatSupervisor: chatSupervisorScenario,
   problemSolver: problemSolverScenario,
+  virtualRepresentativeYes: virtualRepresentativeYesScenario
 };
 
 import useAudioDownload from "./hooks/useAudioDownload";
@@ -217,7 +219,7 @@ function App() {
 
         const companyName = agentSetKey === 'customerServiceRetail'
           ? customerServiceRetailCompanyName
-          : chatSupervisorCompanyName;
+          : virtualRepresentativeYesCompanyName;
         const guardrail = createModerationGuardrail(companyName);
 
         await connect({
@@ -266,12 +268,12 @@ function App() {
     const turnDetection = isPTTActive
       ? null
       : {
-          type: 'server_vad',
-          threshold: 0.9,
-          prefix_padding_ms: 300,
-          silence_duration_ms: 500,
-          create_response: true,
-        };
+        type: 'server_vad',
+        threshold: 0.9,
+        prefix_padding_ms: 300,
+        silence_duration_ms: 500,
+        create_response: true,
+      };
 
     sendEvent({
       type: 'session.update',
